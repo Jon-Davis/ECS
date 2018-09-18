@@ -1,0 +1,7 @@
+[package]
+name = "ecs"
+version = "0.1.0"
+authors = ["Jonathon Davis <jonathondevindavis@gmail.com>"]
+
+[dependencies]
+bit_field = "0.9.0"
