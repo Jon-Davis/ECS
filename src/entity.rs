@@ -5,7 +5,7 @@ use component::Component;
 /// The EntityRegister generates id's for 
 /// Entities so that entities have unique names
 pub struct EntityRegister {
-    entity : u64,
+    pub(crate) entity : u64,
 }
 
 impl EntityRegister {
@@ -29,20 +29,11 @@ impl EntityRegister {
 /// An entity contains an ID and can be used to add
 /// components to a Resource under it's id
 pub struct Entity<'a>{
-    id :  u64,
-    model : &'a mut Resources,
+    pub(crate) id :  u64,
+    pub(crate) model : &'a mut Resources,
 }
 
 impl<'a> Entity<'a> {
-    /// Creates a new Entity from the entity register
-    pub fn new(res : &'a mut Resources) -> Entity<'a> {
-        let num = res.register.register(1);
-        Entity {
-            id: num.start,
-            model : res
-        }
-    }
-
     /// Creates a new Entity given an Entity id, this does not consult the
     /// The register so use high values between 2^32..2^36 or use values
     /// previously registered with the Entity Register but not yet entered

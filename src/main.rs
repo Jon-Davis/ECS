@@ -16,15 +16,15 @@ use state::State;
 use component::Component;
 
 #[derive(Debug, Copy, Clone)]
-struct CompA;
+struct CompA(u64);
 #[derive(Debug, Copy, Clone)]
-struct CompB;
+struct CompB(u64);
 impl Component for CompA {}
 impl Component for CompB {}
 
 fn start_up(res : &mut Resources) {
-    let a = CompA {};
-    let b = CompB {};
+    let a = CompA(0);
+    let b = CompB(1);
     res.new_entity().with::<CompA>(a);
     res.new_entity().with::<CompA>(a).with::<CompB>(b);
     res.new_entity().with::<CompA>(a);
@@ -48,14 +48,20 @@ fn hello_two(res : &mut Resources) -> Trans {
     {
         let c = res.get::<CompA>();
         match c {
-            Some(v) => println!("{}", v.len()),
+            Some(v) => {
+                let aes : Vec<&CompA> = v.collect();
+                println!("{}", aes.len());
+            }
             None => println!("Nothing found")
         };
     }
     {
         let b = res.get::<CompB>();
         match b {
-            Some(v) => println!("{}", v.len()),
+            Some(v) => {
+                let bes : Vec<&CompB> = v.collect();
+                println!("{}", bes.len());
+            },
             None => println!("Nothing found")
         };
     }
