@@ -33,9 +33,11 @@ States contain a dispatcher. When a system is registered to a State, it is added
 which decides when that system will be called.
 
 ```rust
+let system_a = SystemA{}; // SystemA is an empty struct with a start and update function
+let system_b = SystemB{}; // SystemB is an empty struct with an update function
 let intial_state = State::new()
-    .with(System::new().set_start(&start_up).set_update(&hello_world))
-    .with(System::new().set_update(&good_bye));
+    .with(Box::new(system_a))
+    .with(Box::new(system_b));
 let mut sm = StateMachine::new(intial_state);
 sm.run();
 ```
@@ -48,51 +50,93 @@ executed, but this one will Execute it's systems in FIFO order.
 
 ## Systems
 
-Systems are the functions associated with the ECS system, they are a struct of functions that take in a refrence to a Resources struct.
-Every system can respond to any of the 5 events stated above.
-
+Systems are the functions associated with the ECS system. System is a trait that implements 
+start(), exit(), update(), pause(), and resume() functions. There is a defualt implementation
+for each function. A system implementation should overide the functions that it wants to respond to.
 ```rust
-fn hello_world(_ : &mut Resources) -> Trans {
-    println!("Hello World!");
-    Trans::None
+impl System for SystemA {
+    fn update(&mut self, _ : &mut Resources) -> Trans {
+        println!("Hello World!");
+        Trans::None
+    }
 }
-
-...
-
-let hello_world_system = System::new().set_update(&hello_world);
 ```
-
-The above code looks just like a function, that is because it is! The hello_world function takes in a reference to some Resources and returns
-a Transition. This simple function prints hello world, then performs a None Transition. If we were to create a state with just this system.
-It would print Hello World! forever! 
+This simple system above will be called once every 'frame' and print hello world. The function
+will never cause a transition to occur, so if this is the only system in state, the state would
+run forever.
+All system functions take in 2 paramters, a mutable refrence to themselves, and a mutable
+reference to the State Machines Resources.
+The update function is special, becuase it returns a Transition. When special events occur, a system
+can change the current state by returning a transition other than None. 
 
 ## Entities and Components
 
-If Systems are the functional portions of the ECS, then the Entities and Componets are the data. An Analogy to Objects
-is that Entities are Objects and Components are Fields. We can Create an Entity with a position and a sprite and thats
-similar to creating an object with a position and sprite. The Advantage is we can Dynamically create Entities with varying
-amounts of Components at run time. We can also have our system work at the Compoent level, rather than the Object level. These
-Components are stored in the Resources object, and can be created and accessed by other systems.
+If Systems are the functional portions of the ECS, then the Entities and Componets are the data. 
+An Analogy to Objects is that Entities are Objects and Components are Fields. 
+We can Create an Entity with a position and a sprite and thats similar to creating an object with a position and sprite. 
+The Advantage is we can Dynamically create Entities with varying amounts of Components at run time. We can also have our system work at the Compoent level, rather than the Object level. 
+These Components are stored in the Resources object, and can be created and accessed by other systems.
 
 ```rust
-fn start_up(res : &mut Resources) {
-    let a = CompA {};
-    let b = CompB {};
-    res.new_entity().with::<CompA>(a);
-    res.new_entity().with::<CompA>(a).with::<CompB>(b);
-    res.new_entity().with::<CompA>(a);
+struct CompA(u64);
+struct CompB(u64);
+impl Component for CompA {}
+impl Component for CompB {}
+
+impl System for SystemA {
+    fn start(&mut self, res : &mut Resources) {
+        res.new_entity().with::<CompA>(CompA(0));
+        res.new_entity().with::<CompA>(CompA(73)).with::<CompB>(CompB(19));
+        res.new_entity().with::<CompB>(CompB(23));
+    }
+
+    fn update(&mut self, _ : &mut Resources) -> Trans {
+        println!("Hello World!");
+        Trans::None
+    }
 }
-
-fn hello_world(_ : &mut Resources) -> Trans {
-    println!("Hello World!");
-    Trans::None
-}
-
-...
-
-let hello_world_system = System::new().set_start(&start_up).set_update(&hello_world)
 ```
 
-The above code is the entire system shown earlier. Here the start_up function creates two Components: A and B. Both of these structs impl the Componet trait.
-(Additionaly they derive copy, but thats not required). It then creates three Entities, two with a Componet A and one with both a Componet A and Componet B.
-Entities and Componets can be removed and accessed in simalar ways, and it doesn't have to be from the system that originally created it.
+The above code is the entire system shown earlier. Here the start_up function creates three entities.
+The first entity has a single component of type CompA with a value of 0.
+The second entity has two components, one of type CompA with a value of 73, and one of type CompB with a value of 19.
+The third entity has a single component of type CompB with a value of 23.
+Systems can create and use entities and components, however they can access resources created by other systems
+
+```rust 
+impl System for SystemB {
+    fn update(&mut self, res : &mut Resources) -> Trans {
+        println!("Good Bye!");
+        res.remove::<CompB>(2);
+        let next_state = State::new()
+            .with(Box::new(SystemC{}));
+        Trans::Swap(next_state)
+    }
+}
+```
+
+The above system was also attached into the initial state. This system will print Good Bye, then remove the
+CompB associated with the entity 2 (the third entity created). Construct a new state with a system SystemC. 
+Then swap the current state with the newly constructed state. After this sytem runs only the first and second
+entity will be in the Resources.
+
+```rust
+impl System for SystemC {
+    fn update(&mut self, res : &mut Resources) -> Trans {
+        match res.get::<CompA>() {
+            Some(comp_a_iter) => {
+                for comp_a in comp_a_iter {
+                    println!("{}", comp_a.0);
+                }
+            }
+            None => println!("Nothing found")
+        };
+        Trans::Pop
+    }
+}
+```
+
+Components can also be retireved from the Resources, for example you can get an iterator of all
+the components of a certain type by calling the get method for a given type.
+Above is the only system in the newly added state. It retrieves all of the CompA components in the resources
+and prints out their value. This will result in 0 and 73.
