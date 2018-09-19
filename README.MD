@@ -9,13 +9,16 @@ The core loop happens inside of a State Machine. The State Machine is simply a s
 State structs. When the state machine is run, it will peek into the stack and run one iteration of the top
 State. After each iteration, the State will return a Transition. There are 4 supported transitions.
 
-*Transition::None will be no transition, which means that on the next iteration, the State Machine Will call
+Transition::None will be no transition, which means that on the next iteration, the State Machine Will call
 the on_update function for the same State.
-*Transition::Pop will pop the current state off of the Stack. The on_exit functions of the State will be called,
+
+Transition::Pop will pop the current state off of the Stack. The on_exit functions of the State will be called,
 then if there is a State below it, the on_resume function of the new state will run, followed by on_update.
-*Transition::Swap(state) will pop the current state off of the State Machine and addthe new state onto the Stack,
+
+Transition::Swap(state) will pop the current state off of the State Machine and addthe new state onto the Stack,
 The on_exit function of the current state will be called, followed by the on_start function of the new state.
-*Transition::Push(stack) will push a new state ontop of the stack. The on_pause function of the current state
+
+Transition::Push(stack) will push a new state ontop of the stack. The on_pause function of the current state
 will be called, followed by the on_start function of the new State.
 
 Additionally the State Machine will contain a Resources struct which will house the Entities and Components.
@@ -23,11 +26,16 @@ Additionally the State Machine will contain a Resources struct which will house 
 ## State
 
 States are a collection of Systems that are run when given events occur. There are 5 main events:
-*on_update Called once per iteration of the State Machine
-*on_start Called once the State becomes the top of the State Machines Stack
-*on_exit Called once the State is removed from the State Machine
-*on_pause Called when a State is added on top of the current state
-*on_resume Called when the State above it was poped.
+
+on_update Called once per iteration of the State Machine
+
+on_start Called once the State becomes the top of the State Machines Stack
+
+on_exit Called once the State is removed from the State Machine
+
+on_pause Called when a State is added on top of the current state
+
+on_resume Called when the State above it was poped.
 
 States contain a dispatcher. When a system is registered to a State, it is added to the dispatcher
 which decides when that system will be called.
