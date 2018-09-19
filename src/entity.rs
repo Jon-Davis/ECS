@@ -1,6 +1,5 @@
 use std::ops::Range;
-use resources::Resources;
-use component::Component;
+use resources::{Resources,Component};
 
 /// The EntityRegister generates id's for 
 /// Entities so that entities have unique names

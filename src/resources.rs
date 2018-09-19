@@ -1,4 +1,3 @@
-use component::Component;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::any::{TypeId, Any};
@@ -9,6 +8,11 @@ use std::mem::transmute;
 const ENTITY_BITS : Range<usize> = 0..36;
 const NEXT_BITS : Range<usize> = 36..63;
 const IS_ON_BIT : Range<usize> = 63..64;
+
+/*************************************************/
+/* Trait Stored in the ComponentCollections      */
+/*************************************************/
+pub trait Component: Any + Send + Sync {}
 
 /*************************************************/
 /* Trait of a Homogenous Collection of Components*/

@@ -6,7 +6,7 @@ use resources::Resources;
 /// run, this simple Dispatcher executes systems 
 /// in Fifo order
 pub struct Dispatcher {
-    systems : Vec<System>,
+    systems : Vec<Box<System>>,
 }
 
 impl Dispatcher {
@@ -18,7 +18,7 @@ impl Dispatcher {
     }
 
     /// Adds a system to a dispatcher
-    pub fn with(&mut self, system : System) -> &Self{
+    pub fn with(&mut self, system : Box<System>) -> &Self{
         self.systems.push(system);
         self
     }
@@ -27,7 +27,7 @@ impl Dispatcher {
     /// the dispatcher overlooks
     pub fn on_update(&mut self, resources : &mut Resources) -> Trans {
         for system in self.systems.iter_mut() {
-            match system.on_update(resources){
+            match system.update(resources){
                 Trans::None => continue,
                 transition => return transition,
             }
@@ -39,7 +39,7 @@ impl Dispatcher {
     /// the dispatcher overlooks
     pub fn on_start(&mut self, resources : &mut Resources) {
         for system in self.systems.iter_mut() {
-            system.on_start(resources);
+            system.start(resources);
         }
     }
 
@@ -47,7 +47,7 @@ impl Dispatcher {
     /// the dispatcher overlooks
     pub fn on_exit(&mut self, resources : &mut Resources) {
         for system in self.systems.iter_mut() {
-            system.on_exit(resources);
+            system.exit(resources);
         }
     }
 
@@ -55,7 +55,7 @@ impl Dispatcher {
     /// the dispatcher overlooks
     pub fn on_pause(&mut self, resources : &mut Resources) {
         for system in self.systems.iter_mut() {
-            system.on_pause(resources);
+            system.pause(resources);
         }
     }
 
@@ -63,7 +63,7 @@ impl Dispatcher {
     /// the dispatcher overlooks
     pub fn on_resume(&mut self, resources : &mut Resources) {
         for system in self.systems.iter_mut() {
-            system.on_resume(resources);
+            system.resume(resources);
         }
     }
 }
