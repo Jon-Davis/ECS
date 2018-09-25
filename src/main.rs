@@ -1,65 +1,66 @@
 extern crate bit_field;
-
+extern crate rayon;
+mod syncmap;
 mod state;
 mod systems;
 mod dispatcher;
 mod resources;
 mod entity;
 
-use resources::{Resources,Component};
 use systems::System;
+use resources::{Component, ResourceRequest, ResourceToken};
 use state::{State, StateMachine, Trans};
 
-struct CompA(u64);
-struct CompB(u64);
-impl Component for CompA {}
-impl Component for CompB {}
+struct CompInt(u32);
+struct CompFloat(f32);
+impl Component for CompInt{}
+impl Component for CompFloat{}
 
-struct SystemA {}
-struct SystemB {}
-struct SystemC {}
+struct SystemA {
+    resources : ResourceRequest
+}
 
 impl System for SystemA {
-    fn start(&mut self, res : &mut Resources) {
-        res.new_entity().with::<CompA>(CompA(0));
-        res.new_entity().with::<CompA>(CompA(73)).with::<CompB>(CompB(19));
-        res.new_entity().with::<CompB>(CompB(23));
+    fn start(&mut self, token : ResourceToken) {
+        // register components this system will use
+        token.register::<CompInt>();
+        token.register::<CompFloat>();
+
+        // fill out the request on how components will be used
+        self.resources.write::<CompInt>()
+                      .write::<CompFloat>();
+
+        // Lets get some resources and initialize defualt values
+        let loan_token = token.request(&self.resources);
+
+        // once the resources are retrieved, we will need to unpack them
+        let ints = loan_token.unpack_mut::<CompInt>().unwrap();
+        let float = loan_token.unpack_mut::<CompFloat>().unwrap();
+
+        // register a new entity with the components
+        loan_token.register_entity()
+                .with(CompInt(0), ints)
+                .with(CompFloat(5.5), float);
     }
 
-    fn update(&mut self, _ : &mut Resources) -> Trans {
-        println!("Hello World!");
-        Trans::None
-    }
-}
-
-impl System for SystemB {
-    fn update(&mut self, res : &mut Resources) -> Trans {
-        println!("Good Bye!");
-        res.remove::<CompB>(2);
-        let next_state = State::new()
-            .with(Box::new(SystemC{}));
-        Trans::Swap(next_state)
-    }
-}
-
-impl System for SystemC {
-    fn update(&mut self, res : &mut Resources) -> Trans {
-        match res.get::<CompA>() {
-            Some(comp_a_iter) => {
-                for comp_a in comp_a_iter {
-                    println!("{}", comp_a.0);
-                }
-            }
-            None => println!("Nothing found")
-        };
+    fn update(&mut self, token : ResourceToken) -> Trans {
         Trans::Pop
     }
 }
 
+struct SystemB {
+
+}
+impl System for SystemB{}
+
 fn main() {
+    let system_a = SystemA{
+        resources : ResourceRequest::new()
+    }; 
+    let system_b = SystemB{}; // SystemB is an empty struct with an update function
     let intial_state = State::new()
-        .with(Box::new(SystemA{}))
-        .with(Box::new(SystemB{}));
+        .with(Box::new(system_a))
+        .with(Box::new(system_b));
     let mut sm = StateMachine::new(intial_state);
     sm.run();
 }

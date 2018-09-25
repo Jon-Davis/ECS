@@ -1,9 +1,11 @@
-use std::collections::HashMap;
 use std::ops::Range;
 use std::any::{TypeId, Any};
 use entity::{Entity,EntityRegister};
+use std::sync::Mutex;
 use bit_field::BitField;
+use std::cell::RefMut;
 use std::mem::transmute;
+use syncmap::{SyncMap,Request,Loan};
 
 const ENTITY_BITS : Range<usize> = 0..36;
 const NEXT_BITS : Range<usize> = 36..63;
@@ -17,12 +19,7 @@ pub trait Component: Any + Send + Sync {}
 /*************************************************/
 /* Trait of a Homogenous Collection of Components*/
 /*************************************************/
-trait ComponentCollection  {
-    fn push(&mut self, component : Box<Any>, entity_id : u64) -> Result<(),Box<Any>>;
-    fn remove(&mut self, entity_id : u64);
-    fn get_id(&self) -> TypeId;
-    fn len(&self) -> usize;
-}
+pub trait ComponentCollection : Send + Sync {}
 
 /*************************************************/
 /* Wrapper which stores Components and Meta Data */
@@ -34,9 +31,9 @@ struct ComponentWrapper<D : Component> {
 
 impl<D : Component> ComponentWrapper<D> {
     /// Constructs a new Component Wrapper, and initializes meta data
-    fn new(component: Box<D>, entity_id : u64, next : u64, active : bool) -> ComponentWrapper<D> {
+    fn new(component: D, entity_id : u64, next : u64, active : bool) -> ComponentWrapper<D> {
         ComponentWrapper {
-            component: *component,
+            component: component,
             meta: *0.set_bits(ENTITY_BITS, entity_id)
                     .set_bits(NEXT_BITS, next)
                     .set_bits(IS_ON_BIT, active as u64),
@@ -61,7 +58,7 @@ impl<D : Component> ComponentWrapper<D> {
 /*************************************************/
 /* Stores a Single type of Component             */
 /*************************************************/
-struct ComponentVector<D : Component> {
+pub struct ComponentVector<D : Component> {
     components : Vec<ComponentWrapper<D>>,
     type_id: TypeId,
     head: usize,
@@ -81,40 +78,35 @@ impl<D : Component> ComponentVector<D> {
     fn iter(&self) -> ComponentVectorIter<D> {
         ComponentVectorIter::new(self)
     }
-}
 
-impl<D : Component> ComponentCollection for ComponentVector<D> {
-    /// Push a new component onto the ComponentCollection.
-    /// Invaraint : The new entity_id is > all previous entity_ids
-    fn push(&mut self, component : Box<Any>, entity_id : u64) -> Result<(),Box<Any>> {
-        match component.downcast::<D>() {
-            Ok(deref) => {
-                // Check if this is the first Component to be added
-                // to the collection
-                if self.len() == 0 {
-                    self.head = 0;
-                    self.tail = 0;
-                } else {
-                    // Get the new index for the new component
-                    let new_index = self.components.len();
-
-                    // Update the previous tail's next to point to the new index
-                    if self.len() > self.tail {
-                        self.components[self.tail].set_next(new_index as u64);
-                    }
-
-                    // update the tail to point to the new index
-                    self.tail = new_index;
-                }
-
-                // Insert the new component into the vector
-                Ok(self.components.push(ComponentWrapper::new(deref,entity_id,0,true)))
-            },
-            Err(e) => Err(e),
-        }
+    fn len(&self) -> usize {
+        self.components.len()
     }
 
-    fn remove(&mut self, entity_id : u64) {
+    pub(crate) fn push(&mut self, component : D, entity_id : u64){
+        // Check if this is the first Component to be added
+        // to the collection
+        if self.len() == 0 {
+            self.head = 0;
+            self.tail = 0;
+        } else {
+            // Get the new index for the new component
+            let new_index = self.components.len();
+
+            // Update the previous tail's next to point to the new index
+            if self.len() > self.tail {
+                self.components[self.tail].set_next(new_index as u64);
+            }
+
+            // update the tail to point to the new index
+            self.tail = new_index;
+        }
+
+        // Insert the new component into the vector
+        self.components.push(ComponentWrapper::new(component,entity_id,0,true))
+    }
+
+    fn remove(&mut self, entity_id : u64){
         // Can't remove from empty vector
         if self.len() == 0 {
             return;
@@ -190,15 +182,9 @@ impl<D : Component> ComponentCollection for ComponentVector<D> {
             self.components.swap_remove(curr);
         }
     }
-
-    fn get_id(&self) -> TypeId {
-        self.type_id
-    }
-
-    fn len(&self) -> usize {
-        self.components.len()
-    }
 }
+
+impl<D : Component> ComponentCollection for ComponentVector<D> {}
 
 /*************************************************/
 /* Iterator for Component Vector                 */
@@ -265,8 +251,8 @@ impl<'a, D: Component> Iterator for CompVecIter<'a, D>{
 /* Stores a Collection of ComponentCollections   */
 /*************************************************/
 pub struct Resources {
-    component_collections : HashMap<TypeId, Box<ComponentCollection>>,
-    register: EntityRegister,
+    component_collections : SyncMap<TypeId, Box<ComponentCollection>>,
+    register: Mutex<EntityRegister>,
 }
 
 impl Resources {
@@ -274,74 +260,129 @@ impl Resources {
     /// EntityRegister
     pub fn new() -> Resources {
         Resources {
-            component_collections: HashMap::new(),
-            register: EntityRegister::new(),
+            component_collections: SyncMap::new(),
+            register: Mutex::new(EntityRegister::new()),
         }
     }
 
-    /// Adds a component to an entity
-    pub fn add<T : Component>(&mut self, component : T, entity : u64) -> Result<(), Box<Any>> {
-        let id = TypeId::of::<T>();
-
-        // check to make sure the component being removed exists, if not add it
-        if !self.component_collections.contains_key(&id){
-            let new_vector : ComponentVector<T> = ComponentVector::new();
-            self.component_collections.insert(id, Box::new(new_vector));
-        } 
-
-        let manager = self.component_collections.get_mut(&id).expect("Resource not found");
-        manager.push(Box::new(component), entity)
-        
+    pub fn register<T: Component>(&self){
+        let vec : ComponentVector<T> = ComponentVector::new();
+        let _ = self.component_collections.insert( TypeId::of::<T>(), Box::new(vec));
     }
 
-    /// Removes a component from an entity
-    pub fn remove<T : Component>(&mut self, entity : u64){
-        let id = TypeId::of::<T>();
+    pub fn request(&self, request : &ResourceRequest) -> Loan<TypeId,Box<ComponentCollection>> {
+        self.component_collections.request(&request.request).unwrap().unwrap()
+    }
 
-        // Check to make sure that a component exists before removing it
-        match self.component_collections.get_mut(&id) {
-            Some(manager) => manager.remove(entity),
-            None => ()
+    pub(crate) fn get_token(&self) -> ResourceToken<'_>{
+        ResourceToken::new(self)
+    }
+}
+
+/*************************************************/
+/* A Resource Token allows for a single loan     */
+/*************************************************/
+pub struct ResourceToken<'a> {
+    loan : Option<Loan<'a,TypeId,Box<ComponentCollection>>>,
+    resources : &'a Resources,
+}
+
+impl<'a> ResourceToken<'a>{
+    pub fn new(res : &'a Resources) -> ResourceToken<'a> {
+        ResourceToken {
+            loan : None,
+            resources : res,
         }
     }
 
-    /// Creates a new entity in the resources
-    pub fn new_entity(&mut self) -> Entity {
-        let num = self.register.register(1);
-        Entity {
-            id: num.start,
-            model : self,
+    pub fn register<T : Component>(&self) {
+        self.resources.register::<T>();
+    }
+
+    pub fn register_entity(&self) -> Entity{
+        let id = self.resources.register.lock().unwrap().register(1);
+        Entity::new_with_id(id.start)
+    }
+
+    pub fn request(self, request : &ResourceRequest) -> ResourceToken<'a> {
+        let resources = self.resources;
+        //unpack!(self, ResourceRequest, Resources);
+        drop(self);
+        ResourceToken {
+            loan : Some(resources.request(request)),
+            resources: resources,
         }
     }
-    
-    // Returns a reference to a componentvector with the given T
-    fn get_component_vector<T:Component>(&mut self) -> Option<&ComponentVector<T>> {
-        let id = TypeId::of::<T>();
-        match self.component_collections.get(&id) {
-            Some(cc) => {
-                // NOTE: use of unsafe
-                let col : Option<&ComponentVector<T>> = unsafe {
-                    let c = transmute::<&Box<ComponentCollection>, &Box<ComponentVector<T>>>(cc);
-                    if c.get_id() == id {
-                        Some(&*c)
-                    } else {
-                        None
-                    }
-                };
-                col
-            }
+
+    pub fn loan(&self) -> Option<&Loan<'a,TypeId,Box<ComponentCollection>>>{
+        match &self.loan {
+            Some(loan) => Some(&loan),
             None => None,
         }
     }
 
-    /// Gets an entire list of Components
-    pub fn get<T : Component>(&mut self) -> Option<CompVecIter<T>>{
-        match self.get_component_vector::<T>() {
-            Some(vec) => {
-                Some(CompVecIter::new(vec))
+    pub fn unpack<C : Component>(&self) -> Option<&Box<ComponentVector<C>>> {
+        match self.loan {
+            Some(ref loan) => {
+                let id = TypeId::of::<C>();
+                match loan.read(&id) {
+                    Some(value) => {
+                        let val = unsafe {
+                            transmute::<&Box<ComponentCollection>, &Box<ComponentVector<C>>>(value)
+                        };
+                        Some(val)
+                    },
+                    None => None,
+                }
             },
             None => None,
         }
+    }
+
+    pub fn unpack_mut<C : Component>(&self) -> Option<RefMut<&mut Box<ComponentVector<C>>>> {
+        match self.loan {
+            Some(ref loan) => {
+                let id = TypeId::of::<C>();
+                match loan.write(&id) {
+                    Some(value) => {
+                        let val = unsafe {
+                            transmute::<RefMut<&mut Box<ComponentCollection>>, RefMut<&mut Box<ComponentVector<C>>>>(value)
+                        };
+                        Some(val)
+                    },
+                    None => None,
+                }
+            },
+            None => None,
+        }
+    }
+}
+
+/*************************************************/
+/* Stores a Collection of Requests for resources */
+/*************************************************/
+pub struct ResourceRequest {
+    request: Request<TypeId>,
+}
+
+// Wrapper for Request
+impl ResourceRequest {
+    pub fn new() -> ResourceRequest {
+        ResourceRequest {
+            request : Request::new(),
+        }
+    }
+
+    pub fn read<T : Component>(&mut self) -> &mut Self {
+        let id = TypeId::of::<T>();
+        self.request.read(id);
+        self
+    }
+
+    pub fn write<T : Component>(&mut self) -> &mut Self {
+        let id = TypeId::of::<T>();
+        self.request.write(id);
+        self
     }
 }
 
@@ -350,7 +391,6 @@ impl Resources {
 /*************************************************/
 #[cfg(test)]
 mod tests {
-    // Note this useful idiom: importing names from outer (for mod tests) scope.
     use super::*;
 
     struct CompA {
@@ -384,9 +424,9 @@ mod tests {
         let b = CompA::new(1);
         let c = CompA::new(2);
         let mut cv : ComponentVector<CompA> = ComponentVector::new();
-        let _ = cv.push(Box::new(a), 0);
-        let _ = cv.push(Box::new(b), 1);
-        let _ = cv.push(Box::new(c), 2);
+        let _ = cv.push(a, 0);
+        let _ = cv.push(b, 1);
+        let _ = cv.push(c, 2);
         let mut i = 0;
         for item in cv.iter() {
             assert!(item.get_entity() == item.component.id);
@@ -412,12 +452,12 @@ mod tests {
         let f = CompA::new(5);
         let g = CompA::new(6);
         let mut cv : ComponentVector<CompA> = ComponentVector::new();
-        let _ = cv.push(Box::new(a), 0);
-        let _ = cv.push(Box::new(b), 1);
-        let _ = cv.push(Box::new(c), 2);
-        let _ = cv.push(Box::new(d), 3);
-        let _ = cv.push(Box::new(e), 4);
-        let _ = cv.push(Box::new(f), 5);
+        let _ = cv.push(a, 0);
+        let _ = cv.push(b, 1);
+        let _ = cv.push(c, 2);
+        let _ = cv.push(d, 3);
+        let _ = cv.push(e, 4);
+        let _ = cv.push(f, 5);
 
         // Insert 5 elements
         let actual : Vec<u64> = [0, 1, 2, 3, 4, 5].iter().map(|d| *d as u64).collect();
@@ -455,7 +495,7 @@ mod tests {
         assert!(order == cv_order);
 
         // add element 6
-        let _ = cv.push(Box::new(g), 6);
+        let _ = cv.push(g, 6);
         let actual : Vec<u64> = [3, 1, 5, 6].iter().map(|d| *d as u64).collect();
         let order : Vec<u64>  = [1, 3, 5, 6].iter().map(|d| *d as u64).collect();
         let cv_order : Vec<u64> = cv.iter().map(|c| c.get_entity()).collect();
@@ -466,33 +506,7 @@ mod tests {
 
     #[test]
     fn test_res(){
-        let mut res = Resources::new();
-        res.new_entity().with::<CompA>(CompA::new(0));
-        res.new_entity().with::<CompA>(CompA::new(1)).with::<CompB>(CompB::new(5));
-        res.new_entity().with::<CompA>(CompA::new(2));
-        // Iterate through the A Components
-        match res.get::<CompA>() {
-            Some(col)=> {
-                let mut i = 0;
-                for a in col {
-                    assert!(a.id == i);
-                    i += 1;
-                }
-                assert!(i == 3);
-            },
-            None => assert!(false, "Get did not return an iterator"),
-        }
-        // Iterate through the B Components
-        match res.get::<CompB>() {
-            Some(col) => {
-                let mut i = 0;
-                for b in col {
-                    assert!(b.id == 5);
-                    i += 1;
-                }
-                assert!(i == 1);
-            },
-            None => assert!(false, "Get did not return an iterator"),
-        }
+       
+        
     }
 }

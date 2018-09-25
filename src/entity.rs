@@ -1,5 +1,6 @@
 use std::ops::Range;
-use resources::{Resources,Component};
+use std::cell::RefMut;
+use resources::{Component,ComponentVector};
 
 /// The EntityRegister generates id's for 
 /// Entities so that entities have unique names
@@ -27,20 +28,18 @@ impl EntityRegister {
 
 /// An entity contains an ID and can be used to add
 /// components to a Resource under it's id
-pub struct Entity<'a>{
+pub struct Entity{
     pub(crate) id :  u64,
-    pub(crate) model : &'a mut Resources,
 }
 
-impl<'a> Entity<'a> {
+impl Entity {
     /// Creates a new Entity given an Entity id, this does not consult the
     /// The register so use high values between 2^32..2^36 or use values
     /// previously registered with the Entity Register but not yet entered
     /// as Entities into the Resources section
-    pub fn new_with_id(id : u64, res : &'a mut Resources) -> Entity<'a> {
+    pub(crate) fn new_with_id(id : u64) -> Entity {
         Entity {
             id: id,
-            model : res,
         }
     }
 
@@ -50,8 +49,8 @@ impl<'a> Entity<'a> {
     }
 
     /// Add's a component to the resources under this entity
-    pub fn with<T : Component>(self, comp : T) -> Self {
-        self.model.add::<T>(comp,self.id);
+    pub fn with<T>(self, comp : T, mut write : RefMut<&mut Box<ComponentVector<T>>>) -> Self where T : Component {
+        write.push(comp,self.id);
         self
     }
 }
