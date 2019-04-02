@@ -1,3 +1,5 @@
+## Depricating in favor of [GenECS](https://github.com/Jon-Davis/GenECS)
+
 # State Entity Component System
 
 This is an Entity Component System writen in rust that uses a simple State Machine to handle
